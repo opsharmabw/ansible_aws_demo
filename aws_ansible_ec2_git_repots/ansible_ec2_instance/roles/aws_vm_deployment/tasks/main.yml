@@ -1,0 +1,154 @@
+- name: create a VPC
+  ec2_vpc_net:
+    name: rahul-vpc
+    cidr_block: 10.10.0.0/24
+    region: "{{ region }}"
+    state: present
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}" 
+  register: vpc
+
+- name: create a subnet
+  ec2_vpc_subnet:
+    state: present
+    vpc_id: "{{ vpc.vpc.id }}"
+    region: "{{ region }}"
+    cidr: 10.10.0.0/26
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}"
+    map_public: yes
+    resource_tags:
+      Name: rahul-subnet
+  register: subnet	
+
+- name: create a internet gateway
+  ec2_vpc_igw:
+    vpc_id: "{{ vpc.vpc.id }}"
+    region: "{{ region }}"
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}"
+    state: "present"
+    tags: 
+      Name: rahul-igw
+  register: igw
+
+
+- name: create vpc route table
+  ec2_vpc_route_table:
+    vpc_id: "{{ vpc.vpc.id }}"
+    region: "{{ region }}"
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}"
+    subnets:
+      - "{{ subnet.subnet.id }}"
+    routes:
+      - dest: 0.0.0.0/0
+        gateway_id: "{{ igw.gateway_id  }}"
+    tags:
+      Name: rahul-route
+
+- name: create a security group
+  ec2_group:
+    name: rahulsg
+    description: security group
+    vpc_id: "{{ vpc.vpc.id }}"
+    region: "{{ region }}"
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}"
+    rules:
+      - proto: tcp
+        ports:
+        - 22
+        cidr_ip: 0.0.0.0/0
+  register: security_group
+
+
+
+- name: create a ec2 Instance 
+  ec2:
+    image: "{{ image_id }}"
+    wait: yes
+    instance_type: "{{ instance_id }}"
+    region: "{{ region }}"
+    group_id: "{{ security_group.group_id }}"
+    vpc_subnet_id: "{{ subnet.subnet.id }}"
+    key_name: my_keypair
+    instance_tags:
+      Name: rahultestvm
+    count: 1 
+    aws_access_key: "{{ access }}"
+    aws_secret_key: "{{ secret }}"
+  register: ec2_instance
+
+- name: Sleep for 60 seconds and continue with play
+  wait_for:
+    timeout: 60
+  delegate_to: localhost
+
+
+- debug:
+    var: ec2_instance
+
+- debug:
+    var: ec2_instance.instances[0].public_ip
+
+- name: creating one stat variable containing ip address of the new virtual machine
+  ansible.builtin.set_stats:
+    data:
+      target_ip: "{{ ec2_instance.instances[0].public_ip }}"
+
+
+- name: Add the ipaddress generated into AT inventory
+  uri:
+      url: https://{{tower_ip}}/api/v2/groups/{{group_number}}/hosts/
+      user: "{{at_username}}"
+      password: "{{at_password}}"
+      method: POST
+      body: '{ "name" : "{{ec2_instance.instances[0].public_ip}}" , "description": "vm_name: {{ VM }}" }'
+      force_basic_auth: yes
+      status_code: 201
+      body_format: json
+      validate_certs: no
+  register:   AT_info
+
+
+
+
+- name: creating one stat variable containing name of new virtual machine
+  ansible.builtin.set_stats:
+    data:
+      stat_vm_name: "{{ ec2_instance.instances[0].tags.Name }}"
+
+
+- name: creating one stat variable containing id of new virtual machine 
+  ansible.builtin.set_stats:
+    data:
+      stat_vm_id: "{{ ec2_instance.instances[0].id }}"
+
+
+- name: creating one stat variable containing vpc id
+  ansible.builtin.set_stats:
+    data:
+      stat_vpc_id: "{{ vpc.vpc.id }}"
+
+- name: creating one stat variable containing subnet id
+  ansible.builtin.set_stats:
+    data:
+      stat_subnet_id: "{{ subnet.subnet.id }}"
+      
+- name: creating one stat variable containing security group id
+  ansible.builtin.set_stats:
+    data:
+      stat_security_group_id: "{{ security_group.group_id }}"
+
+- name: creating one stat variable containing private ip address of the new virtual machine
+  ansible.builtin.set_stats:
+    data:
+      stat_private_ip: "{{ ec2_instance.instances[0].private_ip }}"
+
+- name: creating one stat variable containing public ip address of the new virtual machine
+  ansible.builtin.set_stats:
+    data:
+      stat_public_ip: "{{ ec2_instance.instances[0].public_ip }}"
+
+
